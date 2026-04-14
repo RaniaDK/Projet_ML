@@ -238,6 +238,7 @@ jupyter
 **Dorra Mani & Rania Dabbek**
 Ecole polytechnique Sousse — 2025/2026
 
-[![GitHub](https://img.shields.io/badge/GitHub-Profile-black?logo=github)](https://github.com/RaniaDK)
+[![GitHub](https://img.shields.io/badge/GitHub-Profile-black?logo=github)](https://github.com/RaniaDK/Projet_ML.git)
+
 
 
