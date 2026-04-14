@@ -1,0 +1,664 @@
+---
+title: "Prédiction du Niveau de Risque de Cancer"
+subtitle: "Projet Machine Learning End-to-End"
+author:
+  - name: "Rania Dabbek & Dorra Mani"
+    affiliation: "Polytechnique Sousse"
+
+lang: fr
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 4
+    toc-title: "Table des Matières"
+    toc-location: left
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Afficher le code"
+    highlight-style: github
+    fig-align: center
+    fig-cap-location: bottom
+    self-contained: true
+    smooth-scroll: true
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+---
+
+```{python}
+#| label: setup
+#| include: false
+
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import (
+    accuracy_score, confusion_matrix,
+    classification_report, ConfusionMatrixDisplay
+)
+import warnings
+warnings.filterwarnings('ignore')
+
+sns.set_theme(style="whitegrid", palette="muted")
+plt.rcParams.update({
+    'figure.dpi': 120,
+    'axes.titlesize': 13,
+    'axes.titleweight': 'bold',
+    'axes.labelsize': 11,
+})
+```
+
+---
+
+## Résumé Exécutif
+
+Ce projet présente une démarche complète de Machine Learning appliquée à la
+prédiction du niveau de risque de cancer chez des patients. À partir d'un jeu
+de données de **1 100 observations** et **23 variables médicales**, cinq
+algorithmes de classification ont été implémentés. Une anomalie critique dans
+les données cibles a été identifiée et corrigée, permettant d'atteindre une
+accuracy finale de **98,31 %** avec le modèle **Random Forest optimisé**.
+
+::: {.callout-important}
+## Découverte Critique
+**215 lignes** présentaient une valeur manquante dans la variable cible `Level`.
+L'imputation par la médiane créait artificiellement un **4ème label fictif**,
+réduisant l'accuracy de 98 % à **64–79 %**. Ce problème a été corrigé par
+suppression des lignes concernées via `dropna(subset=['Level'])`.
+:::
+
+---
+
+## Contexte et Définition du Problème
+
+### Problématique
+
+La détection précoce du cancer constitue un enjeu majeur de santé publique.
+L'objectif de ce projet est de construire un modèle capable de **classifier
+automatiquement le niveau de risque** d'un patient à partir de ses symptômes
+et facteurs environnementaux.
+
+**Type de problème :** Classification supervisée multi-classe (3 classes)
+
+| Classe | Signification | Effectif |
+|--------|--------------|----------|
+| 🟢 Low | Risque faible | 273 |
+| 🟡 Medium | Risque modéré | 286 |
+| 🔴 High | Risque élevé | 326 |
+
+### Source des Données
+
+Le dataset *Cancer Patient Data* est issu de la plateforme **Kaggle**.
+Il contient des informations cliniques anonymisées sur 1 100 patients,
+comprenant des facteurs environnementaux, comportementaux et symptomatiques.
+
+---
+
+## Analyse Exploratoire des Données (EDA)
+
+### Chargement et Aperçu
+
+```{python}
+#| label: load-data
+#| tbl-cap: "Aperçu des 5 premières lignes du dataset brut"
+
+df_raw = pd.read_excel("cancer_patient_dirty_pro.xlsx")
+print(f"Dimensions : {df_raw.shape[0]} lignes × {df_raw.shape[1]} colonnes")
+df_raw.head()
+```
+
+### Dimensions et Types de Variables
+
+```{python}
+#| label: info-data
+
+print(f"Patients total         : {df_raw.shape[0]}")
+print(f"Variables              : {df_raw.shape[1]}")
+print(f"Variables numériques   : {df_raw.select_dtypes(include='number').shape[1]}")
+print(f"Variables catégorielles: {df_raw.select_dtypes(include='object').shape[1]}")
+print()
+print(df_raw.dtypes)
+```
+
+### Analyse des Valeurs Manquantes
+
+```{python}
+#| label: missing-values
+
+missing     = df_raw.isnull().sum().sort_values(ascending=False)
+missing_pct = (missing / len(df_raw) * 100).round(2)
+missing_df  = pd.DataFrame({
+    'Valeurs manquantes': missing,
+    'Pourcentage (%)': missing_pct
+})
+missing_df = missing_df[missing_df['Valeurs manquantes'] > 0]
+print(missing_df.to_string())
+print(f"\n  Total NaN : {df_raw.isnull().sum().sum()}")
+print(f"  NaN dans Level (TARGET) : {df_raw['Level'].isna().sum()}")
+```
+
+```{python}
+#| label: fig-missing
+#| fig-cap: "Valeurs manquantes par colonne — la TARGET Level est mise en évidence"
+
+fig, ax = plt.subplots(figsize=(12, 4))
+missing_plot = df_raw.isnull().sum().sort_values(ascending=False)
+missing_plot = missing_plot[missing_plot > 0]
+bar_colors = ['#e74c3c' if i == 'Level' else '#3498db' for i in missing_plot.index]
+bars = ax.bar(missing_plot.index, missing_plot.values, color=bar_colors)
+ax.set_title("Valeurs Manquantes par Colonne", fontweight='bold')
+ax.set_ylabel("Nombre de NaN")
+ax.tick_params(axis='x', rotation=45)
+for bar, val in zip(bars, missing_plot.values):
+    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 2,
+            str(val), ha='center', fontsize=9)
+plt.tight_layout()
+plt.show()
+```
+
+### Distribution de la Variable Cible
+
+```{python}
+#| label: fig-target
+#| fig-cap: "Distribution des niveaux de risque — dataset équilibré"
+
+df_viz = df_raw.dropna(subset=['Level'])
+colors_map = {'High': '#e74c3c', 'Medium': '#f39c12', 'Low': '#2ecc71'}
+counts = df_viz['Level'].value_counts()
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+
+bars = axes[0].bar(counts.index, counts.values,
+                   color=[colors_map[l] for l in counts.index],
+                   edgecolor='white', linewidth=1.2)
+axes[0].set_title("Distribution des Classes")
+axes[0].set_ylabel("Nombre de patients")
+for bar, val in zip(bars, counts.values):
+    axes[0].text(bar.get_x() + bar.get_width()/2,
+                 bar.get_height() + 3, str(val), ha='center', fontweight='bold')
+
+axes[1].pie(counts.values, labels=counts.index,
+            colors=[colors_map[l] for l in counts.index],
+            autopct='%1.1f%%', startangle=90,
+            wedgeprops={'edgecolor': 'white', 'linewidth': 1.5})
+axes[1].set_title("Répartition en Pourcentage")
+
+plt.suptitle("Distribution de la Variable Cible — Level",
+             fontsize=14, fontweight='bold')
+plt.tight_layout()
+plt.show()
+print("Observation : Dataset équilibré — aucun rééchantillonnage nécessaire.")
+```
+
+### Statistiques Descriptives
+
+```{python}
+#| label: stats-desc
+#| tbl-cap: "Statistiques descriptives des variables numériques"
+
+df_viz.describe().round(2)
+```
+
+### Distribution des Variables Numériques
+
+```{python}
+#| label: fig-histograms
+#| fig-cap: "Distribution de chaque variable numérique"
+
+df_viz.select_dtypes(include='number').hist(
+    figsize=(16, 12), bins=15,
+    color='steelblue', edgecolor='white'
+)
+plt.suptitle("Histogrammes des Variables Numériques",
+             fontsize=14, fontweight='bold', y=1.01)
+plt.tight_layout()
+plt.show()
+```
+
+### Matrice de Corrélation
+
+```{python}
+#| label: fig-correlation
+#| fig-cap: "Matrice de corrélation — corrélations fortes entre Smoking et Lung Disease"
+
+plt.figure(figsize=(14, 10))
+corr = df_viz.select_dtypes(include='number').corr()
+mask = np.triu(np.ones_like(corr, dtype=bool))
+sns.heatmap(corr, mask=mask, annot=True, fmt='.2f',
+            cmap='coolwarm', center=0, linewidths=0.5,
+            cbar_kws={'shrink': 0.8})
+plt.title("Matrice de Corrélation entre les Variables",
+          fontsize=14, fontweight='bold')
+plt.tight_layout()
+plt.show()
+```
+
+### Détection des Outliers
+
+```{python}
+#| label: fig-boxplot-before
+#| fig-cap: "Boxplot avant nettoyage — outliers visibles"
+
+fig, ax = plt.subplots(figsize=(16, 5))
+df_viz.select_dtypes(include='number').boxplot(ax=ax)
+ax.tick_params(axis='x', rotation=45)
+ax.set_title("Boxplot — Détection des Outliers (Avant Nettoyage)",
+             fontweight='bold')
+plt.tight_layout()
+plt.show()
+```
+
+---
+
+## Prétraitement des Données
+
+### Étape 1 — Fix Critique : Suppression des NaN dans la TARGET
+
+::: {.callout-warning}
+##  Étape Obligatoire — Fix Critique
+`Level` contient **215 NaN**. Il faut les supprimer **avant** toute autre
+opération. Appliquer `fillna()` sur la TARGET génère un 4ème label fictif
+et fausse toutes les performances.
+:::
+
+```{python}
+#| label: fix-target
+
+df = df_raw.copy()
+print(f"Avant fix  — Lignes : {len(df)} | NaN Level : {df['Level'].isna().sum()}")
+
+df = df.dropna(subset=['Level'])
+
+print(f"Après fix  — Lignes : {len(df)} | NaN Level : {df['Level'].isna().sum()}")
+```
+
+### Étape 2 — Imputation des Features
+
+```{python}
+#| label: imputation
+
+df = df.fillna(df.median(numeric_only=True))
+print(f"Valeurs manquantes restantes : {df.isnull().sum().sum()}")
+```
+
+### Étape 3 — Encodage de la Variable Cible
+
+```{python}
+#| label: encoding
+
+le = LabelEncoder()
+df['Level'] = le.fit_transform(df['Level'].astype(str))
+
+print("Correspondance des labels :")
+for i, cls in enumerate(le.classes_):
+    print(f"  {cls} → {i}")
+```
+
+### Étape 4 — Suppression de la Colonne Identifiant
+
+```{python}
+#| label: drop-id
+
+if 'Patient Id' in df.columns:
+    df = df.drop('Patient Id', axis=1)
+
+print(f"Colonnes conservées : {df.shape[1]}")
+```
+
+### Étape 5 — Correction des Outliers (Clipping)
+
+```{python}
+#| label: clipping
+
+cols_to_fix = ['Air Pollution', 'Alcohol use', 'Dust Allergy', 'Balanced Diet']
+for col in cols_to_fix:
+    df[col] = df[col].clip(upper=8)
+
+print("Valeurs maximales après clipping :")
+print(df[cols_to_fix].max())
+```
+
+```{python}
+#| label: fig-boxplot-after
+#| fig-cap: "Boxplot après correction des outliers"
+
+plt.figure(figsize=(10, 4))
+sns.boxplot(data=df[cols_to_fix], palette='Set2')
+plt.title("Boxplot — Après Correction des Outliers", fontweight='bold')
+plt.tight_layout()
+plt.show()
+```
+
+### Étape 6 — Séparation Train / Test et Standardisation
+
+```{python}
+#| label: split
+
+X = df.drop('Level', axis=1)
+y = df['Level']
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+
+scaler    = StandardScaler()
+X_train_s = scaler.fit_transform(X_train)
+X_test_s  = scaler.transform(X_test)
+
+print(f"Train : {X_train.shape[0]} patients")
+print(f"Test  : {X_test.shape[0]} patients")
+```
+
+---
+
+## Modélisation
+
+### Justification du Choix des Algorithmes
+
+| Algorithme | Famille | Justification |
+|---|---|---|
+| Logistic Regression | Linéaire | modèle simple de référence |
+| KNN | Instance-based | Non-paramétrique, simple |
+| SVM | Noyau | séparation optimale des classes |
+| Decision Tree | Arbre | Interprétable, visualisable |
+| Random Forest | Ensemble | modèle puissant et stable |
+
+### Modèle 1 — SVM
+
+```{python}
+#| label: svm
+
+svm_model = SVC(kernel='linear', random_state=42)
+svm_model.fit(X_train_s, y_train)
+y_pred_svm = svm_model.predict(X_test_s)
+print(f"SVM Accuracy : {accuracy_score(y_test, y_pred_svm)*100:.2f}%")
+```
+
+### Modèle 2 — KNN
+
+```{python}
+#| label: knn
+
+knn_model = KNeighborsClassifier(n_neighbors=5)
+knn_model.fit(X_train_s, y_train)
+y_pred_knn = knn_model.predict(X_test_s)
+print(f"KNN Accuracy : {accuracy_score(y_test, y_pred_knn)*100:.2f}%")
+```
+
+### Modèle 3 — Régression Logistique
+
+```{python}
+#| label: lr
+
+lr_model = LogisticRegression(max_iter=1000, random_state=42)
+lr_model.fit(X_train_s, y_train)
+y_pred_lr = lr_model.predict(X_test_s)
+print(f"Logistic Regression Accuracy : {accuracy_score(y_test, y_pred_lr)*100:.2f}%")
+```
+
+### Modèle 4 — Decision Tree
+
+```{python}
+#| label: dt
+
+dt_model = DecisionTreeClassifier(random_state=42)
+dt_model.fit(X_train, y_train)
+y_pred_dt = dt_model.predict(X_test)
+print(f"Decision Tree Accuracy : {accuracy_score(y_test, y_pred_dt)*100:.2f}%")
+```
+
+```{python}
+#| label: fig-cm-dt
+#| fig-cap: "Matrice de confusion — Decision Tree"
+
+fig, ax = plt.subplots(figsize=(6, 4))
+ConfusionMatrixDisplay(
+    confusion_matrix(y_test, y_pred_dt),
+    display_labels=le.classes_
+).plot(ax=ax, colorbar=False, cmap='Blues')
+ax.set_title("Matrice de Confusion — Decision Tree", fontweight='bold')
+plt.tight_layout()
+plt.show()
+```
+
+### Modèle 5 — Random Forest
+
+```{python}
+#| label: rf
+
+rf_model = RandomForestClassifier(n_estimators=100, random_state=42)
+rf_model.fit(X_train, y_train)
+y_pred_rf = rf_model.predict(X_test)
+print(f"Random Forest Accuracy : {accuracy_score(y_test, y_pred_rf)*100:.2f}%")
+```
+
+```{python}
+#| label: fig-cm-rf
+#| fig-cap: "Matrice de confusion — Random Forest"
+
+fig, ax = plt.subplots(figsize=(6, 4))
+ConfusionMatrixDisplay(
+    confusion_matrix(y_test, y_pred_rf),
+    display_labels=le.classes_
+).plot(ax=ax, colorbar=False, cmap='Greens')
+ax.set_title("Matrice de Confusion — Random Forest", fontweight='bold')
+plt.tight_layout()
+plt.show()
+```
+
+---
+
+## Évaluation et Optimisation
+
+### Comparaison des 5 Modèles
+
+```{python}
+#| label: fig-comparison
+#| fig-cap: "Comparaison des accuracy des 5 algorithmes"
+
+results = {
+    'KNN':                 accuracy_score(y_test, y_pred_knn),
+    'Logistic Regression': accuracy_score(y_test, y_pred_lr),
+    'SVM':                 accuracy_score(y_test, y_pred_svm),
+    'Decision Tree':       accuracy_score(y_test, y_pred_dt),
+    'Random Forest':       accuracy_score(y_test, y_pred_rf),
+}
+
+results_df = pd.DataFrame(
+    list(results.items()), columns=['Modèle', 'Accuracy']
+).sort_values('Accuracy', ascending=True)
+
+fig, ax = plt.subplots(figsize=(10, 5))
+bar_colors = ['#e74c3c' if v < 0.90 else '#f39c12' if v < 0.95 else '#2ecc71'
+              for v in results_df['Accuracy']]
+bars = ax.barh(results_df['Modèle'], results_df['Accuracy'] * 100,
+               color=bar_colors, edgecolor='white', linewidth=1.2)
+ax.set_xlim(60, 105)
+ax.set_xlabel('Accuracy (%)')
+ax.set_title('Comparaison des 5 Modèles ML', fontweight='bold')
+ax.axvline(x=95, color='gray', linestyle='--', alpha=0.6, label='Seuil 95%')
+ax.legend()
+for bar, val in zip(bars, results_df['Accuracy'] * 100):
+    ax.text(bar.get_width() + 0.3, bar.get_y() + bar.get_height() / 2,
+            f'{val:.2f}%', va='center', fontweight='bold')
+plt.tight_layout()
+plt.show()
+
+print(results_df.sort_values('Accuracy', ascending=False).to_string(index=False))
+```
+
+### Optimisation par GridSearchCV
+
+```{python}
+#| label: gridsearch
+
+param_grid = {
+    'n_estimators':     [100, 200, 300],
+    'max_depth':        [None, 10, 20],
+    'min_samples_leaf': [1, 2, 4]
+}
+
+grid_search = GridSearchCV(
+    RandomForestClassifier(random_state=42),
+    param_grid, cv=5, scoring='accuracy', n_jobs=-1
+)
+grid_search.fit(X_train, y_train)
+
+best_model  = grid_search.best_estimator_
+y_pred_best = best_model.predict(X_test)
+
+print(f"Meilleurs paramètres  : {grid_search.best_params_}")
+print(f"Meilleur score CV     : {grid_search.best_score_*100:.2f}%")
+print(f"Accuracy sur Test Set : {accuracy_score(y_test, y_pred_best)*100:.2f}%")
+```
+
+### Rapport de Classification Détaillé
+
+```{python}
+#| label: report
+
+print(classification_report(y_test, y_pred_best, target_names=le.classes_))
+```
+
+### Validation Croisée 5-Fold
+
+```{python}
+#| label: cross-val
+
+cv_scores = cross_val_score(best_model, X, y, cv=5, scoring='accuracy')
+
+for i, s in enumerate(cv_scores, 1):
+    print(f"  Fold {i} : {s*100:.2f}%")
+print(f"\n  Moyenne    : {cv_scores.mean()*100:.2f}%")
+print(f"  Écart-type : ± {cv_scores.std()*100:.2f}%")
+```
+
+---
+
+## Interprétation du Modèle
+
+### Feature Importance
+
+```{python}
+#| label: fig-feature-importance
+#| fig-cap: "Importance des variables selon Random Forest — Coughing of Blood est la plus prédictive"
+
+importances = pd.Series(
+    best_model.feature_importances_, index=X.columns
+).sort_values(ascending=True)
+
+fig, ax = plt.subplots(figsize=(10, 7))
+bar_colors = ['#e74c3c' if v == importances.max() else '#3498db'
+              for v in importances.values]
+importances.plot(kind='barh', ax=ax, color=bar_colors, edgecolor='white')
+ax.set_title("Feature Importance — Random Forest Optimisé", fontweight='bold')
+ax.set_xlabel("Importance (Gini)")
+plt.tight_layout()
+plt.show()
+
+print("Top 5 variables :")
+print(importances.sort_values(ascending=False).head(5).to_string())
+```
+
+### Coefficients — Régression Logistique
+
+```{python}
+#| label: fig-coef
+#| fig-cap: "Coefficients de la Régression Logistique"
+
+coef = pd.Series(lr_model.coef_[0], index=X.columns).sort_values()
+fig, ax = plt.subplots(figsize=(10, 6))
+bar_colors = ['#e74c3c' if v > 0 else '#3498db' for v in coef.values]
+coef.plot(kind='barh', ax=ax, color=bar_colors, edgecolor='white')
+ax.set_title("Coefficients — Régression Logistique", fontweight='bold')
+ax.set_xlabel("Coefficient")
+ax.axvline(x=0, color='black', linewidth=0.8)
+plt.tight_layout()
+plt.show()
+```
+
+---
+
+## Conclusion
+
+### Bilan Final des Performances
+
+```{python}
+#| label: final-table
+
+all_results = {
+    'KNN':                   accuracy_score(y_test, y_pred_knn),
+    'Logistic Regression':   accuracy_score(y_test, y_pred_lr),
+    'SVM (Linear)':          accuracy_score(y_test, y_pred_svm),
+    'Decision Tree':         accuracy_score(y_test, y_pred_dt),
+    'Random Forest':         accuracy_score(y_test, y_pred_rf),
+    'Random Forest (Tuned)': accuracy_score(y_test, y_pred_best),
+}
+
+final_df = pd.DataFrame(
+    list(all_results.items()), columns=['Modèle', 'Accuracy']
+).sort_values('Accuracy', ascending=False)
+final_df['Accuracy (%)'] = (final_df['Accuracy'] * 100).round(2)
+print(final_df[['Modèle', 'Accuracy (%)']].to_string(index=False))
+```
+
+::: {.callout-tip}
+## ✅ Enseignements du Projet
+
+1. **La qualité des données prime sur l'algorithme** — le fix critique a apporté
+   **+34 points** d'accuracy.
+2. **Random Forest** est le meilleur modèle : robuste et interprétable.
+3. **GridSearchCV** confirme les hyperparamètres optimaux : `n_estimators=200`,
+   `max_depth=None`.
+4. **Coughing of Blood** est la variable la plus prédictive.
+5. Accuracy finale : **98,31 %** (test) | **99,43 % ± 0,23 %** (CV 5-Fold).
+:::
+
+### Applicabilité Réelle
+
+Ce modèle constitue un **outil d'aide au diagnostic médical**. Il ne remplace pas
+le jugement d'un professionnel de santé, mais peut servir de système de triage
+ou d'alerte précoce dans un contexte clinique supervisé.
+
+---
+
+## Sauvegarde du Modèle
+
+```{python}
+#| label: save
+#| eval: false
+
+import pickle
+
+with open('model.pkl', 'wb') as f:
+    pickle.dump(best_model, f)
+
+with open('label_encoder.pkl', 'wb') as f:
+    pickle.dump(le, f)
+
+print(" Modèle et encodeur sauvegardés.")
+```
+
+---
+
+## Références
+
+- Pedregosa et al. (2011). *Scikit-learn: Machine Learning in Python*. JMLR, 12, 2825–2830.
+- Breiman, L. (2001). *Random Forests*. Machine Learning, 45(1), 5–32.
+- Dataset : *Cancer Patient Data* — Kaggle (2023).
+
+---
+
+*Document généré avec [Quarto](https://quarto.org) — Projet ML 2025–2026*

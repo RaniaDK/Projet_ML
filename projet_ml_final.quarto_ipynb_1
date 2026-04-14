@@ -1,0 +1,1045 @@
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "---\n",
+        "title: \"Prédiction du Niveau de Risque de Cancer\"\n",
+        "subtitle: \"Projet Machine Learning End-to-End\"\n",
+        "author:\n",
+        "  - name: \"Rania Dabbek & Dorra Mani\"\n",
+        "    affiliation: \"Institut Supérieur d'Informatique\"\n",
+        "date: today\n",
+        "lang: fr\n",
+        "format:\n",
+        "  html:\n",
+        "    theme: cosmo\n",
+        "    toc: true\n",
+        "    toc-depth: 4\n",
+        "    toc-title: \"Table des Matières\"\n",
+        "    toc-location: left\n",
+        "    number-sections: true\n",
+        "    code-fold: true\n",
+        "    code-tools: true\n",
+        "    code-summary: \"📂 Afficher le code\"\n",
+        "    highlight-style: github\n",
+        "    fig-align: center\n",
+        "    fig-cap-location: bottom\n",
+        "    self-contained: true\n",
+        "    smooth-scroll: true\n",
+        "execute:\n",
+        "  echo: true\n",
+        "  warning: false\n",
+        "  message: false\n",
+        "  cache: false\n",
+        "---"
+      ],
+      "id": "dad99f09"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: setup\n",
+        "#| include: false\n",
+        "\n",
+        "import pandas as pd\n",
+        "import numpy as np\n",
+        "import seaborn as sns\n",
+        "import matplotlib.pyplot as plt\n",
+        "from sklearn.preprocessing import LabelEncoder, StandardScaler\n",
+        "from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV\n",
+        "from sklearn.svm import SVC\n",
+        "from sklearn.neighbors import KNeighborsClassifier\n",
+        "from sklearn.linear_model import LogisticRegression\n",
+        "from sklearn.tree import DecisionTreeClassifier\n",
+        "from sklearn.ensemble import RandomForestClassifier\n",
+        "from sklearn.metrics import (\n",
+        "    accuracy_score, confusion_matrix,\n",
+        "    classification_report, ConfusionMatrixDisplay\n",
+        ")\n",
+        "import warnings\n",
+        "warnings.filterwarnings('ignore')\n",
+        "\n",
+        "sns.set_theme(style=\"whitegrid\", palette=\"muted\")\n",
+        "plt.rcParams.update({\n",
+        "    'figure.dpi': 120,\n",
+        "    'axes.titlesize': 13,\n",
+        "    'axes.titleweight': 'bold',\n",
+        "    'axes.labelsize': 11,\n",
+        "})"
+      ],
+      "id": "setup",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "---\n",
+        "\n",
+        "## Résumé Exécutif\n",
+        "\n",
+        "Ce projet présente une démarche complète de Machine Learning appliquée à la\n",
+        "prédiction du niveau de risque de cancer chez des patients. À partir d'un jeu\n",
+        "de données de **1 100 observations** et **23 variables médicales**, cinq\n",
+        "algorithmes de classification ont été implémentés. Une anomalie critique dans\n",
+        "les données cibles a été identifiée et corrigée, permettant d'atteindre une\n",
+        "accuracy finale de **98,31 %** avec le modèle **Random Forest optimisé**.\n",
+        "\n",
+        "::: {.callout-important}\n",
+        "## ⚠️ Découverte Critique\n",
+        "**215 lignes** présentaient une valeur manquante dans la variable cible `Level`.\n",
+        "L'imputation par la médiane créait artificiellement un **4ème label fictif**,\n",
+        "réduisant l'accuracy de 98 % à **64–79 %**. Ce problème a été corrigé par\n",
+        "suppression des lignes concernées via `dropna(subset=['Level'])`.\n",
+        ":::\n",
+        "\n",
+        "---\n",
+        "\n",
+        "## Contexte et Définition du Problème\n",
+        "\n",
+        "### Problématique\n",
+        "\n",
+        "La détection précoce du cancer constitue un enjeu majeur de santé publique.\n",
+        "L'objectif de ce projet est de construire un modèle capable de **classifier\n",
+        "automatiquement le niveau de risque** d'un patient à partir de ses symptômes\n",
+        "et facteurs environnementaux.\n",
+        "\n",
+        "**Type de problème :** Classification supervisée multi-classe (3 classes)\n",
+        "\n",
+        "| Classe | Signification | Effectif |\n",
+        "|--------|--------------|----------|\n",
+        "| 🟢 Low | Risque faible | 273 |\n",
+        "| 🟡 Medium | Risque modéré | 286 |\n",
+        "| 🔴 High | Risque élevé | 326 |\n",
+        "\n",
+        "### Source des Données\n",
+        "\n",
+        "Le dataset *Cancer Patient Data* est issu de la plateforme **Kaggle**.\n",
+        "Il contient des informations cliniques anonymisées sur 1 100 patients,\n",
+        "comprenant des facteurs environnementaux, comportementaux et symptomatiques.\n",
+        "\n",
+        "---\n",
+        "\n",
+        "## Analyse Exploratoire des Données (EDA)\n",
+        "\n",
+        "### Chargement et Aperçu"
+      ],
+      "id": "a81a53c1"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: load-data\n",
+        "#| tbl-cap: Aperçu des 5 premières lignes du dataset brut\n",
+        "\n",
+        "df_raw = pd.read_excel(\"cancer_patient_dirty_pro.xlsx\")\n",
+        "print(f\"Dimensions : {df_raw.shape[0]} lignes × {df_raw.shape[1]} colonnes\")\n",
+        "df_raw.head()"
+      ],
+      "id": "load-data",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Dimensions et Types de Variables"
+      ],
+      "id": "c0c38dd5"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: info-data\n",
+        "\n",
+        "print(f\"Patients total         : {df_raw.shape[0]}\")\n",
+        "print(f\"Variables              : {df_raw.shape[1]}\")\n",
+        "print(f\"Variables numériques   : {df_raw.select_dtypes(include='number').shape[1]}\")\n",
+        "print(f\"Variables catégorielles: {df_raw.select_dtypes(include='object').shape[1]}\")\n",
+        "print()\n",
+        "print(df_raw.dtypes)"
+      ],
+      "id": "info-data",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Analyse des Valeurs Manquantes"
+      ],
+      "id": "a70dd449"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: missing-values\n",
+        "\n",
+        "missing     = df_raw.isnull().sum().sort_values(ascending=False)\n",
+        "missing_pct = (missing / len(df_raw) * 100).round(2)\n",
+        "missing_df  = pd.DataFrame({\n",
+        "    'Valeurs manquantes': missing,\n",
+        "    'Pourcentage (%)': missing_pct\n",
+        "})\n",
+        "missing_df = missing_df[missing_df['Valeurs manquantes'] > 0]\n",
+        "print(missing_df.to_string())\n",
+        "print(f\"\\n⚠️  Total NaN : {df_raw.isnull().sum().sum()}\")\n",
+        "print(f\"⚠️  NaN dans Level (TARGET) : {df_raw['Level'].isna().sum()}\")"
+      ],
+      "id": "missing-values",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: fig-missing\n",
+        "#| fig-cap: Valeurs manquantes par colonne — la TARGET Level est mise en évidence\n",
+        "\n",
+        "fig, ax = plt.subplots(figsize=(12, 4))\n",
+        "missing_plot = df_raw.isnull().sum().sort_values(ascending=False)\n",
+        "missing_plot = missing_plot[missing_plot > 0]\n",
+        "bar_colors = ['#e74c3c' if i == 'Level' else '#3498db' for i in missing_plot.index]\n",
+        "bars = ax.bar(missing_plot.index, missing_plot.values, color=bar_colors)\n",
+        "ax.set_title(\"Valeurs Manquantes par Colonne\", fontweight='bold')\n",
+        "ax.set_ylabel(\"Nombre de NaN\")\n",
+        "ax.tick_params(axis='x', rotation=45)\n",
+        "for bar, val in zip(bars, missing_plot.values):\n",
+        "    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 2,\n",
+        "            str(val), ha='center', fontsize=9)\n",
+        "plt.tight_layout()\n",
+        "plt.show()"
+      ],
+      "id": "fig-missing",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Distribution de la Variable Cible"
+      ],
+      "id": "fdf3a8b6"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: fig-target\n",
+        "#| fig-cap: Distribution des niveaux de risque — dataset équilibré\n",
+        "\n",
+        "df_viz = df_raw.dropna(subset=['Level'])\n",
+        "colors_map = {'High': '#e74c3c', 'Medium': '#f39c12', 'Low': '#2ecc71'}\n",
+        "counts = df_viz['Level'].value_counts()\n",
+        "\n",
+        "fig, axes = plt.subplots(1, 2, figsize=(12, 4))\n",
+        "\n",
+        "bars = axes[0].bar(counts.index, counts.values,\n",
+        "                   color=[colors_map[l] for l in counts.index],\n",
+        "                   edgecolor='white', linewidth=1.2)\n",
+        "axes[0].set_title(\"Distribution des Classes\")\n",
+        "axes[0].set_ylabel(\"Nombre de patients\")\n",
+        "for bar, val in zip(bars, counts.values):\n",
+        "    axes[0].text(bar.get_x() + bar.get_width()/2,\n",
+        "                 bar.get_height() + 3, str(val), ha='center', fontweight='bold')\n",
+        "\n",
+        "axes[1].pie(counts.values, labels=counts.index,\n",
+        "            colors=[colors_map[l] for l in counts.index],\n",
+        "            autopct='%1.1f%%', startangle=90,\n",
+        "            wedgeprops={'edgecolor': 'white', 'linewidth': 1.5})\n",
+        "axes[1].set_title(\"Répartition en Pourcentage\")\n",
+        "\n",
+        "plt.suptitle(\"Distribution de la Variable Cible — Level\",\n",
+        "             fontsize=14, fontweight='bold')\n",
+        "plt.tight_layout()\n",
+        "plt.show()\n",
+        "print(\"Observation : Dataset équilibré — aucun rééchantillonnage nécessaire.\")"
+      ],
+      "id": "fig-target",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Statistiques Descriptives"
+      ],
+      "id": "9feafa00"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: stats-desc\n",
+        "#| tbl-cap: Statistiques descriptives des variables numériques\n",
+        "\n",
+        "df_viz.describe().round(2)"
+      ],
+      "id": "stats-desc",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Distribution des Variables Numériques"
+      ],
+      "id": "7c38330a"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: fig-histograms\n",
+        "#| fig-cap: Distribution de chaque variable numérique\n",
+        "\n",
+        "df_viz.select_dtypes(include='number').hist(\n",
+        "    figsize=(16, 12), bins=15,\n",
+        "    color='steelblue', edgecolor='white'\n",
+        ")\n",
+        "plt.suptitle(\"Histogrammes des Variables Numériques\",\n",
+        "             fontsize=14, fontweight='bold', y=1.01)\n",
+        "plt.tight_layout()\n",
+        "plt.show()"
+      ],
+      "id": "fig-histograms",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Matrice de Corrélation"
+      ],
+      "id": "846638e5"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: fig-correlation\n",
+        "#| fig-cap: Matrice de corrélation — corrélations fortes entre Smoking et Lung Disease\n",
+        "\n",
+        "plt.figure(figsize=(14, 10))\n",
+        "corr = df_viz.select_dtypes(include='number').corr()\n",
+        "mask = np.triu(np.ones_like(corr, dtype=bool))\n",
+        "sns.heatmap(corr, mask=mask, annot=True, fmt='.2f',\n",
+        "            cmap='coolwarm', center=0, linewidths=0.5,\n",
+        "            cbar_kws={'shrink': 0.8})\n",
+        "plt.title(\"Matrice de Corrélation entre les Variables\",\n",
+        "          fontsize=14, fontweight='bold')\n",
+        "plt.tight_layout()\n",
+        "plt.show()"
+      ],
+      "id": "fig-correlation",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Détection des Outliers"
+      ],
+      "id": "7d3a7320"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: fig-boxplot-before\n",
+        "#| fig-cap: Boxplot avant nettoyage — outliers visibles\n",
+        "\n",
+        "fig, ax = plt.subplots(figsize=(16, 5))\n",
+        "df_viz.select_dtypes(include='number').boxplot(ax=ax)\n",
+        "ax.tick_params(axis='x', rotation=45)\n",
+        "ax.set_title(\"Boxplot — Détection des Outliers (Avant Nettoyage)\",\n",
+        "             fontweight='bold')\n",
+        "plt.tight_layout()\n",
+        "plt.show()"
+      ],
+      "id": "fig-boxplot-before",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "---\n",
+        "\n",
+        "## Prétraitement des Données\n",
+        "\n",
+        "### Étape 1 — Fix Critique : Suppression des NaN dans la TARGET\n",
+        "\n",
+        "::: {.callout-warning}\n",
+        "## ⚠️ Étape Obligatoire — Fix Critique\n",
+        "`Level` contient **215 NaN**. Il faut les supprimer **avant** toute autre\n",
+        "opération. Appliquer `fillna()` sur la TARGET génère un 4ème label fictif\n",
+        "et fausse toutes les performances.\n",
+        ":::"
+      ],
+      "id": "3212acfc"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: fix-target\n",
+        "\n",
+        "df = df_raw.copy()\n",
+        "print(f\"Avant fix  — Lignes : {len(df)} | NaN Level : {df['Level'].isna().sum()}\")\n",
+        "\n",
+        "df = df.dropna(subset=['Level'])\n",
+        "\n",
+        "print(f\"Après fix  — Lignes : {len(df)} | NaN Level : {df['Level'].isna().sum()}\")"
+      ],
+      "id": "fix-target",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Étape 2 — Imputation des Features"
+      ],
+      "id": "610fc6ff"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: imputation\n",
+        "\n",
+        "df = df.fillna(df.median(numeric_only=True))\n",
+        "print(f\"Valeurs manquantes restantes : {df.isnull().sum().sum()}\")"
+      ],
+      "id": "imputation",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Étape 3 — Encodage de la Variable Cible"
+      ],
+      "id": "64972fef"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: encoding\n",
+        "\n",
+        "le = LabelEncoder()\n",
+        "df['Level'] = le.fit_transform(df['Level'].astype(str))\n",
+        "\n",
+        "print(\"Correspondance des labels :\")\n",
+        "for i, cls in enumerate(le.classes_):\n",
+        "    print(f\"  {cls} → {i}\")"
+      ],
+      "id": "encoding",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Étape 4 — Suppression de la Colonne Identifiant"
+      ],
+      "id": "eb3ca460"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: drop-id\n",
+        "\n",
+        "if 'Patient Id' in df.columns:\n",
+        "    df = df.drop('Patient Id', axis=1)\n",
+        "\n",
+        "print(f\"Colonnes conservées : {df.shape[1]}\")"
+      ],
+      "id": "drop-id",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Étape 5 — Correction des Outliers (Clipping)"
+      ],
+      "id": "c56f94ee"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: clipping\n",
+        "\n",
+        "cols_to_fix = ['Air Pollution', 'Alcohol use', 'Dust Allergy', 'Balanced Diet']\n",
+        "for col in cols_to_fix:\n",
+        "    df[col] = df[col].clip(upper=8)\n",
+        "\n",
+        "print(\"Valeurs maximales après clipping :\")\n",
+        "print(df[cols_to_fix].max())"
+      ],
+      "id": "clipping",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: fig-boxplot-after\n",
+        "#| fig-cap: Boxplot après correction des outliers\n",
+        "\n",
+        "plt.figure(figsize=(10, 4))\n",
+        "sns.boxplot(data=df[cols_to_fix], palette='Set2')\n",
+        "plt.title(\"Boxplot — Après Correction des Outliers\", fontweight='bold')\n",
+        "plt.tight_layout()\n",
+        "plt.show()"
+      ],
+      "id": "fig-boxplot-after",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Étape 6 — Séparation Train / Test et Standardisation"
+      ],
+      "id": "98e90660"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: split\n",
+        "\n",
+        "X = df.drop('Level', axis=1)\n",
+        "y = df['Level']\n",
+        "\n",
+        "X_train, X_test, y_train, y_test = train_test_split(\n",
+        "    X, y, test_size=0.2, random_state=42, stratify=y\n",
+        ")\n",
+        "\n",
+        "scaler    = StandardScaler()\n",
+        "X_train_s = scaler.fit_transform(X_train)\n",
+        "X_test_s  = scaler.transform(X_test)\n",
+        "\n",
+        "print(f\"Train : {X_train.shape[0]} patients\")\n",
+        "print(f\"Test  : {X_test.shape[0]} patients\")"
+      ],
+      "id": "split",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "---\n",
+        "\n",
+        "## Modélisation\n",
+        "\n",
+        "### Justification du Choix des Algorithmes\n",
+        "\n",
+        "| Algorithme | Famille | Justification |\n",
+        "|---|---|---|\n",
+        "| Logistic Regression | Linéaire | Baseline interprétable |\n",
+        "| KNN | Instance-based | Non-paramétrique, simple |\n",
+        "| SVM | Noyau | Robuste en haute dimension |\n",
+        "| Decision Tree | Arbre | Interprétable, visualisable |\n",
+        "| Random Forest | Ensemble | Robustesse, résistance overfitting |\n",
+        "\n",
+        "### Modèle 1 — SVM"
+      ],
+      "id": "74ba6c00"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: svm\n",
+        "\n",
+        "svm_model = SVC(kernel='linear', random_state=42)\n",
+        "svm_model.fit(X_train_s, y_train)\n",
+        "y_pred_svm = svm_model.predict(X_test_s)\n",
+        "print(f\"SVM Accuracy : {accuracy_score(y_test, y_pred_svm)*100:.2f}%\")"
+      ],
+      "id": "svm",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Modèle 2 — KNN"
+      ],
+      "id": "e4633557"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: knn\n",
+        "\n",
+        "knn_model = KNeighborsClassifier(n_neighbors=5)\n",
+        "knn_model.fit(X_train_s, y_train)\n",
+        "y_pred_knn = knn_model.predict(X_test_s)\n",
+        "print(f\"KNN Accuracy : {accuracy_score(y_test, y_pred_knn)*100:.2f}%\")"
+      ],
+      "id": "knn",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Modèle 3 — Régression Logistique"
+      ],
+      "id": "f4a36761"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: lr\n",
+        "\n",
+        "lr_model = LogisticRegression(max_iter=1000, random_state=42)\n",
+        "lr_model.fit(X_train_s, y_train)\n",
+        "y_pred_lr = lr_model.predict(X_test_s)\n",
+        "print(f\"Logistic Regression Accuracy : {accuracy_score(y_test, y_pred_lr)*100:.2f}%\")"
+      ],
+      "id": "lr",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Modèle 4 — Decision Tree"
+      ],
+      "id": "2e4a1b8e"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: dt\n",
+        "\n",
+        "dt_model = DecisionTreeClassifier(random_state=42)\n",
+        "dt_model.fit(X_train, y_train)\n",
+        "y_pred_dt = dt_model.predict(X_test)\n",
+        "print(f\"Decision Tree Accuracy : {accuracy_score(y_test, y_pred_dt)*100:.2f}%\")"
+      ],
+      "id": "dt",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: fig-cm-dt\n",
+        "#| fig-cap: Matrice de confusion — Decision Tree\n",
+        "\n",
+        "fig, ax = plt.subplots(figsize=(6, 4))\n",
+        "ConfusionMatrixDisplay(\n",
+        "    confusion_matrix(y_test, y_pred_dt),\n",
+        "    display_labels=le.classes_\n",
+        ").plot(ax=ax, colorbar=False, cmap='Blues')\n",
+        "ax.set_title(\"Matrice de Confusion — Decision Tree\", fontweight='bold')\n",
+        "plt.tight_layout()\n",
+        "plt.show()"
+      ],
+      "id": "fig-cm-dt",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Modèle 5 — Random Forest"
+      ],
+      "id": "c1bcdbae"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: rf\n",
+        "\n",
+        "rf_model = RandomForestClassifier(n_estimators=100, random_state=42)\n",
+        "rf_model.fit(X_train, y_train)\n",
+        "y_pred_rf = rf_model.predict(X_test)\n",
+        "print(f\"Random Forest Accuracy : {accuracy_score(y_test, y_pred_rf)*100:.2f}%\")"
+      ],
+      "id": "rf",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: fig-cm-rf\n",
+        "#| fig-cap: Matrice de confusion — Random Forest\n",
+        "\n",
+        "fig, ax = plt.subplots(figsize=(6, 4))\n",
+        "ConfusionMatrixDisplay(\n",
+        "    confusion_matrix(y_test, y_pred_rf),\n",
+        "    display_labels=le.classes_\n",
+        ").plot(ax=ax, colorbar=False, cmap='Greens')\n",
+        "ax.set_title(\"Matrice de Confusion — Random Forest\", fontweight='bold')\n",
+        "plt.tight_layout()\n",
+        "plt.show()"
+      ],
+      "id": "fig-cm-rf",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "---\n",
+        "\n",
+        "## Évaluation et Optimisation\n",
+        "\n",
+        "### Comparaison des 5 Modèles"
+      ],
+      "id": "685e92f9"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: fig-comparison\n",
+        "#| fig-cap: Comparaison des accuracy des 5 algorithmes\n",
+        "\n",
+        "results = {\n",
+        "    'KNN':                 accuracy_score(y_test, y_pred_knn),\n",
+        "    'Logistic Regression': accuracy_score(y_test, y_pred_lr),\n",
+        "    'SVM':                 accuracy_score(y_test, y_pred_svm),\n",
+        "    'Decision Tree':       accuracy_score(y_test, y_pred_dt),\n",
+        "    'Random Forest':       accuracy_score(y_test, y_pred_rf),\n",
+        "}\n",
+        "\n",
+        "results_df = pd.DataFrame(\n",
+        "    list(results.items()), columns=['Modèle', 'Accuracy']\n",
+        ").sort_values('Accuracy', ascending=True)\n",
+        "\n",
+        "fig, ax = plt.subplots(figsize=(10, 5))\n",
+        "bar_colors = ['#e74c3c' if v < 0.90 else '#f39c12' if v < 0.95 else '#2ecc71'\n",
+        "              for v in results_df['Accuracy']]\n",
+        "bars = ax.barh(results_df['Modèle'], results_df['Accuracy'] * 100,\n",
+        "               color=bar_colors, edgecolor='white', linewidth=1.2)\n",
+        "ax.set_xlim(60, 105)\n",
+        "ax.set_xlabel('Accuracy (%)')\n",
+        "ax.set_title('Comparaison des 5 Modèles ML', fontweight='bold')\n",
+        "ax.axvline(x=95, color='gray', linestyle='--', alpha=0.6, label='Seuil 95%')\n",
+        "ax.legend()\n",
+        "for bar, val in zip(bars, results_df['Accuracy'] * 100):\n",
+        "    ax.text(bar.get_width() + 0.3, bar.get_y() + bar.get_height() / 2,\n",
+        "            f'{val:.2f}%', va='center', fontweight='bold')\n",
+        "plt.tight_layout()\n",
+        "plt.show()\n",
+        "\n",
+        "print(results_df.sort_values('Accuracy', ascending=False).to_string(index=False))"
+      ],
+      "id": "fig-comparison",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Optimisation par GridSearchCV"
+      ],
+      "id": "80eccb90"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: gridsearch\n",
+        "\n",
+        "param_grid = {\n",
+        "    'n_estimators':     [100, 200, 300],\n",
+        "    'max_depth':        [None, 10, 20],\n",
+        "    'min_samples_leaf': [1, 2, 4]\n",
+        "}\n",
+        "\n",
+        "grid_search = GridSearchCV(\n",
+        "    RandomForestClassifier(random_state=42),\n",
+        "    param_grid, cv=5, scoring='accuracy', n_jobs=-1\n",
+        ")\n",
+        "grid_search.fit(X_train, y_train)\n",
+        "\n",
+        "best_model  = grid_search.best_estimator_\n",
+        "y_pred_best = best_model.predict(X_test)\n",
+        "\n",
+        "print(f\"Meilleurs paramètres  : {grid_search.best_params_}\")\n",
+        "print(f\"Meilleur score CV     : {grid_search.best_score_*100:.2f}%\")\n",
+        "print(f\"Accuracy sur Test Set : {accuracy_score(y_test, y_pred_best)*100:.2f}%\")"
+      ],
+      "id": "gridsearch",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Rapport de Classification Détaillé"
+      ],
+      "id": "1bd08447"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: report\n",
+        "\n",
+        "print(classification_report(y_test, y_pred_best, target_names=le.classes_))"
+      ],
+      "id": "report",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Validation Croisée 5-Fold"
+      ],
+      "id": "d425458a"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: cross-val\n",
+        "\n",
+        "cv_scores = cross_val_score(best_model, X, y, cv=5, scoring='accuracy')\n",
+        "\n",
+        "for i, s in enumerate(cv_scores, 1):\n",
+        "    print(f\"  Fold {i} : {s*100:.2f}%\")\n",
+        "print(f\"\\n  Moyenne    : {cv_scores.mean()*100:.2f}%\")\n",
+        "print(f\"  Écart-type : ± {cv_scores.std()*100:.2f}%\")"
+      ],
+      "id": "cross-val",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "---\n",
+        "\n",
+        "## Interprétation du Modèle\n",
+        "\n",
+        "### Feature Importance"
+      ],
+      "id": "25fbe438"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: fig-feature-importance\n",
+        "#| fig-cap: Importance des variables selon Random Forest — Coughing of Blood est la plus prédictive\n",
+        "\n",
+        "importances = pd.Series(\n",
+        "    best_model.feature_importances_, index=X.columns\n",
+        ").sort_values(ascending=True)\n",
+        "\n",
+        "fig, ax = plt.subplots(figsize=(10, 7))\n",
+        "bar_colors = ['#e74c3c' if v == importances.max() else '#3498db'\n",
+        "              for v in importances.values]\n",
+        "importances.plot(kind='barh', ax=ax, color=bar_colors, edgecolor='white')\n",
+        "ax.set_title(\"Feature Importance — Random Forest Optimisé\", fontweight='bold')\n",
+        "ax.set_xlabel(\"Importance (Gini)\")\n",
+        "plt.tight_layout()\n",
+        "plt.show()\n",
+        "\n",
+        "print(\"Top 5 variables :\")\n",
+        "print(importances.sort_values(ascending=False).head(5).to_string())"
+      ],
+      "id": "fig-feature-importance",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "### Coefficients — Régression Logistique"
+      ],
+      "id": "d1cdb1b6"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: fig-coef\n",
+        "#| fig-cap: Coefficients de la Régression Logistique\n",
+        "\n",
+        "coef = pd.Series(lr_model.coef_[0], index=X.columns).sort_values()\n",
+        "fig, ax = plt.subplots(figsize=(10, 6))\n",
+        "bar_colors = ['#e74c3c' if v > 0 else '#3498db' for v in coef.values]\n",
+        "coef.plot(kind='barh', ax=ax, color=bar_colors, edgecolor='white')\n",
+        "ax.set_title(\"Coefficients — Régression Logistique\", fontweight='bold')\n",
+        "ax.set_xlabel(\"Coefficient\")\n",
+        "ax.axvline(x=0, color='black', linewidth=0.8)\n",
+        "plt.tight_layout()\n",
+        "plt.show()"
+      ],
+      "id": "fig-coef",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "---\n",
+        "\n",
+        "## Conclusion\n",
+        "\n",
+        "### Bilan Final des Performances"
+      ],
+      "id": "1b4d335f"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: final-table\n",
+        "\n",
+        "all_results = {\n",
+        "    'KNN':                   accuracy_score(y_test, y_pred_knn),\n",
+        "    'Logistic Regression':   accuracy_score(y_test, y_pred_lr),\n",
+        "    'SVM (Linear)':          accuracy_score(y_test, y_pred_svm),\n",
+        "    'Decision Tree':         accuracy_score(y_test, y_pred_dt),\n",
+        "    'Random Forest':         accuracy_score(y_test, y_pred_rf),\n",
+        "    'Random Forest (Tuned)': accuracy_score(y_test, y_pred_best),\n",
+        "}\n",
+        "\n",
+        "final_df = pd.DataFrame(\n",
+        "    list(all_results.items()), columns=['Modèle', 'Accuracy']\n",
+        ").sort_values('Accuracy', ascending=False)\n",
+        "final_df['Accuracy (%)'] = (final_df['Accuracy'] * 100).round(2)\n",
+        "print(final_df[['Modèle', 'Accuracy (%)']].to_string(index=False))"
+      ],
+      "id": "final-table",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "::: {.callout-tip}\n",
+        "## ✅ Enseignements du Projet\n",
+        "\n",
+        "1. **La qualité des données prime sur l'algorithme** — le fix critique a apporté\n",
+        "   **+34 points** d'accuracy.\n",
+        "2. **Random Forest** est le meilleur modèle : robuste et interprétable.\n",
+        "3. **GridSearchCV** confirme les hyperparamètres optimaux : `n_estimators=200`,\n",
+        "   `max_depth=None`.\n",
+        "4. **Coughing of Blood** est la variable la plus prédictive.\n",
+        "5. Accuracy finale : **98,31 %** (test) | **99,43 % ± 0,23 %** (CV 5-Fold).\n",
+        ":::\n",
+        "\n",
+        "### Applicabilité Réelle\n",
+        "\n",
+        "Ce modèle constitue un **outil d'aide au diagnostic médical**. Il ne remplace pas\n",
+        "le jugement d'un professionnel de santé, mais peut servir de système de triage\n",
+        "ou d'alerte précoce dans un contexte clinique supervisé.\n",
+        "\n",
+        "---\n",
+        "\n",
+        "## Sauvegarde du Modèle"
+      ],
+      "id": "9b9a68fa"
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "source": [
+        "#| label: save\n",
+        "#| eval: false\n",
+        "\n",
+        "import pickle\n",
+        "\n",
+        "with open('model.pkl', 'wb') as f:\n",
+        "    pickle.dump(best_model, f)\n",
+        "\n",
+        "with open('label_encoder.pkl', 'wb') as f:\n",
+        "    pickle.dump(le, f)\n",
+        "\n",
+        "print(\"✅ Modèle et encodeur sauvegardés.\")"
+      ],
+      "id": "save",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "---\n",
+        "\n",
+        "## Références\n",
+        "\n",
+        "- Pedregosa et al. (2011). *Scikit-learn: Machine Learning in Python*. JMLR, 12, 2825–2830.\n",
+        "- Breiman, L. (2001). *Random Forests*. Machine Learning, 45(1), 5–32.\n",
+        "- Dataset : *Cancer Patient Data* — Kaggle (2023).\n",
+        "\n",
+        "---\n",
+        "\n",
+        "*Document généré avec [Quarto](https://quarto.org) — Projet ML 2025–2026*"
+      ],
+      "id": "284b3d38"
+    }
+  ],
+  "metadata": {
+    "kernelspec": {
+      "name": "python3",
+      "language": "python",
+      "display_name": "Python 3 (ipykernel)",
+      "path": "C:\\Users\\User1\\anaconda3\\share\\jupyter\\kernels\\python3"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 5
+}
